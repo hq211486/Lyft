@@ -1,0 +1,89 @@
+
+-----------------hive scripts for data preparation -----------------
+set hive.exec.parallel=true;
+set hive.exec.compress=true;
+set hive.exec.compress.intermediate=true;
+set mapred.compress.map.output=true;
+set mapreduce.tasktracker.reduce.tasks.maximum=true;
+set mapreduce.tasktracker.map.tasks.maximum=true;
+set hive.optimize.index.filter=true;
+set hive.support.concurrency=false;
+set hive.groupby.orderby.position.alias = true;
+
+
+
+-----------------------------------------------------
+create table driver_profile as 
+select a.*
+,b.rides
+,b.avg_ride_distance
+,b.avg_ride_duration
+,b.prime_ratio
+from
+(
+select driver_id, datediff(to_date('2016-05-15'),driver_onboard_date) as tenure from driver_ids
+)a
+inner join 
+(
+select driver_id
+,count(distinct ride_id) as rides --total rides
+,avg(coalesce(ride_distance,0)) as avg_ride_distance
+,avg(coalesce(ride_duration,0)) as avg_ride_duration
+,sum(ride_prime_time)/sum(ride_duration) as prime_ratio
+,sum(2+0.22*(ride_duration-ride_prime_time)/60+1.15*ride_distance*0.000621371
++0.22*1.5*ride_prime_time/60) as total_cash
+from ride_ids
+group by 1
+)b
+on a.driver_id = b.driver_id
+;
+
+-----------driver cash flow----------------------------------
+drop table cash_flow;
+create table cash_flow as 
+select  a.*
+,2+0.22*(ride_duration-ride_prime_time)/60+1.15*ride_distance*0.000621371
++0.22*1.5*ride_prime_time/60+1.75
+ as total_cash
+,b.timestamp as dropped_off_ts
+,to_date(b.timestamp) as dropped_off_dt
+from ride_ids a left join ride_timestamps b on a.ride_id = b.ride_id
+--group by 1,2,3,4,5,6,7
+;
+
+
+
+
+drop table df;
+create table df as 
+select a.driver_id as id
+,b.dropped_off_dt as date
+,b.total_cash as amount
+,datediff('2016-06-27',last_ride_dt) as recency, a.frequency,c.monetary--RFM
+from 
+(
+select driver_id,sum(rides)/sum(tenure) as frequency
+from 
+driver_profile 
+group by 1
+)a
+inner join 
+(
+select driver_id,dropped_off_dt,total_cash
+from cash_flow
+group by 1,2,3
+)b on a.driver_id = b.driver_id
+inner join
+(
+select driver_id,max(dropped_off_dt) as last_ride_dt,sum(total_cash) as monetary
+from cash_flow
+group by 1
+)c--recency 
+on a.driver_id = c.driver_id
+group by 1,2,3,4,5,6
+;
+
+
+select * from df
+--where recency is not null and frequency is not null
+
